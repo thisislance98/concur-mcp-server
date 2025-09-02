@@ -1,0 +1,20 @@
+# fast-agent configuration for Concur MCP Server
+# Based on: https://fast-agent.ai/mcp/#adding-a-stdio-server
+
+# Set Claude Sonnet 4.0 as the default model
+default_model: "sonnet"
+
+mcp:
+  servers:
+    # Concur expense reports server
+    concur_reports:
+      # command to run the MCP server
+      command: "python"
+      # arguments for the command
+      args: ["/Users/I850333/projects/experiments/concur_mcp/concur_mcp_server.py"]
+      # environment variables with Concur credentials
+      env:
+        CONCUR_CLIENT_ID: "486c51f1-1d22-41cf-b743-ca90fd4279d4"
+        CONCUR_CLIENT_SECRET: "3b615a2e-d467-40be-83c7-3e6286625813"
+        CONCUR_USERNAME: "user11@p10005178e93.com"
+        CONCUR_PASSWORD: "password12"
