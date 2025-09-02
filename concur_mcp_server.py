@@ -2,14 +2,16 @@
 """
 Concur MCP Server using FastMCP
 A Model Context Protocol server that provides tools to interact with Concur expense reports.
+Uses the ConcurExpenseSDK for all API interactions.
 """
 
 import os
 import sys
-import requests
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from concur_expense_sdk import ConcurExpenseSDK, AuthenticationError, NotFoundError, ValidationError, ConcurAPIError
+from concur_expense_tools import create_expense_tools
 
 # Load environment variables from .env if present
 load_dotenv()
@@ -17,50 +19,15 @@ load_dotenv()
 # Initialize the MCP server
 mcp = FastMCP(name="ConcurReportServer")
 
-# Required environment variables
-client_id = os.getenv("CONCUR_CLIENT_ID")
-client_secret = os.getenv("CONCUR_CLIENT_SECRET")
-username = os.getenv("CONCUR_USERNAME")
-password = os.getenv("CONCUR_PASSWORD")
+# Initialize the Concur SDK
+try:
+    concur_sdk = ConcurExpenseSDK()
+except AuthenticationError as e:
+    print(f"Authentication error: {e}")
+    sys.exit(1)
 
-def missing_vars():
-    """Check for missing required environment variables."""
-    return [
-        var for var, val in [
-            ("CONCUR_CLIENT_ID", client_id),
-            ("CONCUR_CLIENT_SECRET", client_secret),
-            ("CONCUR_USERNAME", username),
-            ("CONCUR_PASSWORD", password),
-        ] if not val
-    ]
-
-def get_access_token() -> str:
-    """Get an access token from Concur using OAuth2 password grant."""
-    if missing_vars():
-        raise ValueError(f"Missing required environment variables: {', '.join(missing_vars())}")
-    
-    # Concur OAuth2 token endpoint (US instance)
-    TOKEN_URL = "https://integration.api.concursolutions.com/oauth2/v0/token"
-    
-    payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "grant_type": "password",
-        "username": username,
-        "password": password,
-    }
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    
-    try:
-        response = requests.post(TOKEN_URL, data=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return data["access_token"]
-    except requests.RequestException as e:
-        error_msg = f"Error requesting token: {e}"
-        if hasattr(e, 'response') and e.response is not None:
-            error_msg += f"\nResponse: {e.response.text}"
-        raise Exception(error_msg)
+# Add expense-related tools
+create_expense_tools(mcp, concur_sdk)
 
 @mcp.tool
 def list_concur_reports(limit: int = 25) -> Dict[str, Any]:
@@ -74,62 +41,22 @@ def list_concur_reports(limit: int = 25) -> Dict[str, Any]:
         Dictionary containing the list of reports and metadata
     """
     try:
-        # Get access token
-        access_token = get_access_token()
+        result = concur_sdk.list_reports(limit=limit)
+        if result['success']:
+            result['message'] = f"Successfully retrieved {result['count']} expense reports"
+        return result
         
-        # Concur API endpoint for expense reports (v3)
-        reports_url = "https://integration.api.concursolutions.com/api/v3.0/expense/reports"
-        
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        
-        # Add limit parameter
-        params = {
-            "limit": min(max(1, limit), 100)  # Ensure limit is between 1 and 100
-        }
-        
-        response = requests.get(reports_url, headers=headers, params=params)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # Extract and format the reports data
-        reports = data.get('Items', [])
-        
-        # Format the response with useful information
-        formatted_reports = []
-        for report in reports:
-            formatted_report = {
-                'id': report.get('ID'),
-                'name': report.get('Name'),
-                'purpose': report.get('Purpose'),
-                'total': report.get('Total'),
-                'currency_code': report.get('CurrencyCode'),
-                'submission_date': report.get('SubmitDate'),
-                'approval_status': report.get('ApprovalStatusName'),
-                'workflow_step': report.get('WorkflowStepName'),
-                'owner_name': report.get('OwnerName'),
-                'created_date': report.get('CreateDate'),
-                'last_modified_date': report.get('LastModifiedDate')
-            }
-            formatted_reports.append(formatted_report)
-        
-        return {
-            'success': True,
-            'count': len(formatted_reports),
-            'reports': formatted_reports,
-            'total_available': data.get('TotalCount', len(formatted_reports)),
-            'message': f"Successfully retrieved {len(formatted_reports)} expense reports"
-        }
-        
-    except Exception as e:
+    except (AuthenticationError, NotFoundError, ValidationError, ConcurAPIError) as e:
         return {
             'success': False,
             'error': str(e),
             'message': f"Failed to retrieve Concur reports: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Unexpected error retrieving Concur reports: {str(e)}"
         }
 
 @mcp.tool
@@ -144,67 +71,28 @@ def get_concur_report_details(report_id: str) -> Dict[str, Any]:
         Dictionary containing detailed report information
     """
     try:
-        # Get access token
-        access_token = get_access_token()
+        result = concur_sdk.get_report(report_id)
+        if result['success']:
+            result['message'] = f"Successfully retrieved details for report {report_id}"
+        return result
         
-        # Concur API endpoint for a specific expense report (v3)
-        report_url = f"https://integration.api.concursolutions.com/api/v3.0/expense/reports/{report_id}"
-        
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.get(report_url, headers=headers)
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # Format the detailed report information
-        report_details = {
-            'id': data.get('ID'),
-            'name': data.get('Name'),
-            'purpose': data.get('Purpose'),
-            'total': data.get('Total'),
-            'currency_code': data.get('CurrencyCode'),
-            'submission_date': data.get('SubmitDate'),
-            'approval_status': data.get('ApprovalStatusName'),
-            'workflow_step': data.get('WorkflowStepName'),
-            'owner_name': data.get('OwnerName'),
-            'created_date': data.get('CreateDate'),
-            'last_modified_date': data.get('LastModifiedDate'),
-            'business_purpose': data.get('BusinessPurpose'),
-            'country': data.get('Country'),
-            'expense_entries_uri': data.get('ExpenseEntriesURI'),
-            'policy_id': data.get('PolicyID'),
-            'report_version': data.get('ReportVersion')
-        }
-        
+    except NotFoundError:
         return {
-            'success': True,
-            'report': report_details,
-            'message': f"Successfully retrieved details for report {report_id}"
+            'success': False,
+            'error': 'Report not found',
+            'message': f"No report found with ID: {report_id}"
         }
-        
-    except requests.HTTPError as e:
-        if e.response.status_code == 404:
-            return {
-                'success': False,
-                'error': 'Report not found',
-                'message': f"No report found with ID: {report_id}"
-            }
-        else:
-            return {
-                'success': False,
-                'error': str(e),
-                'message': f"HTTP error retrieving report {report_id}: {str(e)}"
-            }
-    except Exception as e:
+    except (AuthenticationError, ValidationError, ConcurAPIError) as e:
         return {
             'success': False,
             'error': str(e),
             'message': f"Failed to retrieve report details: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Unexpected error retrieving report details: {str(e)}"
         }
 
 @mcp.tool
@@ -215,33 +103,161 @@ def test_concur_connection() -> Dict[str, Any]:
     Returns:
         Dictionary indicating whether the connection was successful
     """
+    return concur_sdk.test_connection()
+
+@mcp.tool
+def create_concur_report(name: str, purpose: str = "", business_purpose: str = "", 
+                        currency_code: str = "USD", country: str = "US") -> Dict[str, Any]:
+    """
+    Create a new Concur expense report.
+    
+    Args:
+        name: Report name
+        purpose: Report purpose (optional)
+        business_purpose: Business purpose (optional)
+        currency_code: Currency code (default: USD)
+        country: Country code (default: US)
+    
+    Returns:
+        Dictionary containing created report details
+    """
     try:
-        access_token = get_access_token()
+        result = concur_sdk.create_report(
+            name=name, 
+            purpose=purpose, 
+            business_purpose=business_purpose,
+            currency_code=currency_code, 
+            country=country
+        )
+        return result
+        
+    except (AuthenticationError, ValidationError, ConcurAPIError) as e:
         return {
-            'success': True,
-            'message': 'Successfully connected to Concur API',
-            'token_length': len(access_token),
-            'token_prefix': access_token[:20] + '...' if len(access_token) > 20 else access_token
+            'success': False,
+            'error': str(e),
+            'message': f"Failed to create report: {str(e)}"
         }
     except Exception as e:
         return {
             'success': False,
             'error': str(e),
-            'message': f'Failed to connect to Concur API: {str(e)}'
+            'message': f"Unexpected error creating report: {str(e)}"
+        }
+
+@mcp.tool
+def update_concur_report(report_id: str, name: str = None, purpose: str = None, 
+                        business_purpose: str = None, currency_code: str = None, 
+                        country: str = None) -> Dict[str, Any]:
+    """
+    Update an existing Concur expense report.
+    
+    Args:
+        report_id: The ID of the report to update
+        name: New report name (optional)
+        purpose: New report purpose (optional)
+        business_purpose: New business purpose (optional)
+        currency_code: New currency code (optional)
+        country: New country code (optional)
+    
+    Returns:
+        Dictionary indicating success/failure
+    """
+    try:
+        # Build kwargs with only non-None values
+        kwargs = {}
+        if name is not None:
+            kwargs['name'] = name
+        if purpose is not None:
+            kwargs['purpose'] = purpose
+        if business_purpose is not None:
+            kwargs['business_purpose'] = business_purpose
+        if currency_code is not None:
+            kwargs['currency_code'] = currency_code
+        if country is not None:
+            kwargs['country'] = country
+        
+        if not kwargs:
+            return {
+                'success': False,
+                'error': 'No fields to update',
+                'message': 'At least one field must be provided for update'
+            }
+        
+        result = concur_sdk.update_report(report_id, **kwargs)
+        return result
+        
+    except NotFoundError:
+        return {
+            'success': False,
+            'error': 'Report not found',
+            'message': f"No report found with ID: {report_id}"
+        }
+    except (AuthenticationError, ValidationError, ConcurAPIError) as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Failed to update report: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Unexpected error updating report: {str(e)}"
+        }
+
+@mcp.tool
+def delete_concur_report(report_id: str) -> Dict[str, Any]:
+    """
+    Delete a Concur expense report.
+    
+    Args:
+        report_id: The ID of the report to delete
+    
+    Returns:
+        Dictionary indicating success/failure
+    """
+    try:
+        result = concur_sdk.delete_report(report_id)
+        return result
+        
+    except NotFoundError:
+        return {
+            'success': False,
+            'error': 'Report not found',
+            'message': f"No report found with ID: {report_id}"
+        }
+    except (AuthenticationError, ValidationError, ConcurAPIError) as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Failed to delete report: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f"Unexpected error deleting report: {str(e)}"
         }
 
 if __name__ == "__main__":
-    # Check for required environment variables before starting
-    if missing_vars():
-        print(f"Error: Missing required environment variables: {', '.join(missing_vars())}")
-        print("Please set these variables in your .env file or environment.")
-        sys.exit(1)
-    
     print("Starting Concur MCP Server...")
     print("Available tools:")
-    print("  - list_concur_reports: List expense reports")
-    print("  - get_concur_report_details: Get detailed info for a specific report")
-    print("  - test_concur_connection: Test API connection")
+    print("  Report Management:")
+    print("    - list_concur_reports: List expense reports")
+    print("    - get_concur_report_details: Get detailed info for a specific report")
+    print("    - create_concur_report: Create a new expense report")
+    print("    - update_concur_report: Update an existing report")
+    print("    - delete_concur_report: Delete a report")
+    print("  Expense Management:")
+    print("    - list_concur_expenses: List expenses in a report")
+    print("    - get_concur_expense_details: Get detailed info for a specific expense")
+    print("    - create_concur_expense: Create a new expense entry")
+    print("    - update_concur_expense: Update an existing expense")
+    print("    - delete_concur_expense: Delete an expense entry")
+    print("  Utility:")
+    print("    - get_concur_expense_types: Get available expense types")
+    print("    - get_concur_payment_types: Get available payment types")
+    print("    - test_concur_connection: Test API connection")
     
     # Run the MCP server
     mcp.run()
