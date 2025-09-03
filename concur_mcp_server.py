@@ -29,7 +29,7 @@ except AuthenticationError as e:
 # Add expense-related tools
 create_expense_tools(mcp, concur_sdk)
 
-@mcp.tool
+@mcp.tool()
 def list_concur_reports(limit: int = 25) -> Dict[str, Any]:
     """
     List Concur expense reports for the authenticated user.
@@ -59,7 +59,7 @@ def list_concur_reports(limit: int = 25) -> Dict[str, Any]:
             'message': f"Unexpected error retrieving Concur reports: {str(e)}"
         }
 
-@mcp.tool
+@mcp.tool()
 def get_concur_report_details(report_id: str) -> Dict[str, Any]:
     """
     Get detailed information about a specific Concur expense report.
@@ -95,7 +95,7 @@ def get_concur_report_details(report_id: str) -> Dict[str, Any]:
             'message': f"Unexpected error retrieving report details: {str(e)}"
         }
 
-@mcp.tool
+@mcp.tool()
 def test_concur_connection() -> Dict[str, Any]:
     """
     Test the connection to Concur by attempting to authenticate.
@@ -105,7 +105,7 @@ def test_concur_connection() -> Dict[str, Any]:
     """
     return concur_sdk.test_connection()
 
-@mcp.tool
+@mcp.tool()
 def create_concur_report(name: str, purpose: str = "", business_purpose: str = "", 
                         currency_code: str = "USD", country: str = "US") -> Dict[str, Any]:
     """
@@ -144,7 +144,7 @@ def create_concur_report(name: str, purpose: str = "", business_purpose: str = "
             'message': f"Unexpected error creating report: {str(e)}"
         }
 
-@mcp.tool
+@mcp.tool()
 def update_concur_report(report_id: str, name: str = None, purpose: str = None, 
                         business_purpose: str = None, currency_code: str = None, 
                         country: str = None) -> Dict[str, Any]:
@@ -205,7 +205,7 @@ def update_concur_report(report_id: str, name: str = None, purpose: str = None,
             'message': f"Unexpected error updating report: {str(e)}"
         }
 
-@mcp.tool
+@mcp.tool()
 def delete_concur_report(report_id: str) -> Dict[str, Any]:
     """
     Delete a Concur expense report.
@@ -258,6 +258,8 @@ if __name__ == "__main__":
     print("    - get_concur_expense_types: Get available expense types")
     print("    - get_concur_payment_types: Get available payment types")
     print("    - test_concur_connection: Test API connection")
+    print("  Documentation:")
+    print("    - get_concur_api_guide: Get comprehensive API documentation and code examples")
     
     # Run the MCP server
     mcp.run()
