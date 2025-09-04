@@ -394,8 +394,10 @@ class ConcurExpenseSDK:
                 transaction_currency_code=(item.get('transactionAmount', {}).get('currencyCode') if item.get('transactionAmount') 
                                          else item.get('TransactionCurrencyCode')),
                 transaction_date=item.get('transactionDate') or item.get('TransactionDate'),
-                business_purpose=(item.get('businessPurpose', {}).get('value') if item.get('businessPurpose') 
-                                else item.get('BusinessPurpose')),
+                business_purpose=(
+                    item.get('businessPurpose', {}).get('value') if isinstance(item.get('businessPurpose'), dict)
+                    else item.get('businessPurpose') or item.get('BusinessPurpose')
+                ),
                 vendor_description=(item.get('vendor', {}).get('description') if item.get('vendor') 
                                   else item.get('VendorDescription')),
                 city_name=(item.get('location', {}).get('city') if item.get('location') 
