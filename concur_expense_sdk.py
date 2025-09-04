@@ -525,16 +525,11 @@ class ConcurExpenseSDK:
             "CountryCode": country_code
         }
         
-        # Handle payment type - get the actual PaymentTypeID from existing expenses
-        if payment_type is not None:
-            payment_type_id = self._get_payment_type_id(payment_type)
-            if payment_type_id:
-                payload["PaymentTypeID"] = payment_type_id
-            else:
-                # If we can't find a matching payment type ID, try with the default Cash ID
-                # from the existing expense we examined
-                if payment_type.lower() == "cash":
-                    payload["PaymentTypeID"] = "fr1rdFhUGA6l-5FnPPmuq5_HjOMU="
+        # Handle payment type - PaymentTypeID is required for v3 API
+        # Use known working PaymentTypeID (Cash payment type discovered from existing expenses)
+        default_payment_type_id = "fr1rdFhUGA6l-5FnPPmuq5_HjOMU="
+        payload["PaymentTypeID"] = default_payment_type_id
+        logger.info(f"Using known working Cash PaymentTypeID for v3 API compatibility")
         
         try:
             response = self._make_request("POST", "expense/entries", json=payload)
@@ -692,14 +687,49 @@ class ConcurExpenseSDK:
 
     def get_expense_types(self) -> Dict[str, Any]:
         """
-        Get available expense types using v4 API.
+        Get available expense types using user's policies (compatible with v3 create expense).
         
         Returns:
-            Dictionary containing expense types
+            Dictionary containing expense types with v3-compatible codes for the specific user
         """
         try:
-            # Try v3 API first
+            # Use company-wide expense types (these have the v3-compatible codes we need)
+            url = f"{self.config.base_url}/expenseconfig/v4/expensetypes"
+            headers = {
+                "Authorization": f"Bearer {self._get_access_token()}",
+                "Accept": "application/json"
+            }
+            
+            response = self.session.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            expense_types = []
+            for item in data:
+                # Extract v3-compatible information
+                expense_types.append({
+                    'code': item.get('expenseCode'),  # This is the v3-compatible code
+                    'name': item.get('name'),
+                    'category': item.get('expenseCategoryCode'),
+                    'spend_category': item.get('spendCategoryCode'),
+                    'expense_type_id': item.get('expenseTypeId'),  # v4 ID
+                    'description': item.get('description'),
+                    'is_deleted': item.get('isDeleted', False),
+                    'show_on_mobile': item.get('showOnMobile', True)
+                })
+            
+            return {
+                'success': True,
+                'expense_types': expense_types,
+                'count': len(expense_types),
+                'api_version': 'v4_company',
+                'message': f'Retrieved {len(expense_types)} expense types from company configuration'
+            }
+                
+        except Exception as e:
+            # Final fallback: Try v3 API (though it usually fails with 403)
             try:
+                logger.info(f"v4 APIs failed: {e}, trying v3 API fallback")
                 response = self._make_request("GET", "expense/expensetypes")
                 data = response.json()
                 
@@ -708,57 +738,28 @@ class ConcurExpenseSDK:
                     expense_types.append({
                         'code': item.get('Code'),
                         'name': item.get('Name'),
-                        'category': item.get('CategoryCode')
-                    })
-                
-                return {
-                    'success': True,
-                    'expense_types': expense_types,
-                    'count': len(expense_types)
-                }
-            except Exception as v3_error:
-                logger.info(f"v3 API failed: {v3_error}, trying v4 API")
-                
-                # Try v4 API with user ID
-                user_id = self.get_user_id()
-                if not user_id:
-                    raise Exception("Could not get user ID for v4 API")
-                
-                # Use v4 endpoint
-                url = f"{self.config.base_url}/expenseconfig/v4/users/{user_id}/expensetypes"
-                headers = {
-                    "Authorization": f"Bearer {self._get_access_token()}",
-                    "Accept": "application/json"
-                }
-                
-                response = self.session.get(url, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                
-                expense_types = []
-                # Handle both list and dict responses
-                items = data if isinstance(data, list) else data.get('content', data.get('items', []))
-                
-                for item in items:
-                    expense_types.append({
-                        'code': item.get('code'),
-                        'name': item.get('name'),
-                        'id': item.get('id')
+                        'category': item.get('CategoryCode'),
+                        'spend_category': None,
+                        'expense_type_id': item.get('ID'),
+                        'description': None,
+                        'is_deleted': False,
+                        'show_on_mobile': True
                     })
                 
                 return {
                     'success': True,
                     'expense_types': expense_types,
                     'count': len(expense_types),
-                    'api_version': 'v4'
+                    'api_version': 'v3',
+                    'message': f'Retrieved {len(expense_types)} expense types from v3 API'
                 }
-                
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'message': f'Failed to retrieve expense types: {str(e)}'
-            }
+            except Exception as v3_error:
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'fallback_error': str(v3_error),
+                    'message': f'Failed to retrieve expense types from all APIs: v4_user_policy, v4_company ({e}) and v3 ({v3_error})'
+                }
 
     def get_payment_types(self) -> Dict[str, Any]:
         """

@@ -98,14 +98,14 @@ def _generate_expenses_guide() -> Dict[str, Any]:
                 {
                     "step": 2,
                     "title": "Get valid expense types",
-                    "description": "Retrieve available expense type codes",
-                    "code": "# Get expense types\nresponse = requests.get(\n    'https://integration.api.concursolutions.com/api/v3.0/expense/expensetypes',\n    headers=headers\n)\n\nexpense_types = response.json()\nprint('Available expense types:')\nfor expense_type in expense_types['Items'][:5]:  # Show first 5\n    print(f\"  {expense_type['Code']}: {expense_type['Name']}\")"
+                    "description": "Retrieve available expense type codes using v4 company API (compatible with v3 create)",
+                    "code": "# Get expense types from v4 company API (works with v3 create expense)\nresponse = requests.get(\n    'https://integration.api.concursolutions.com/expenseconfig/v4/expensetypes',\n    headers=headers\n)\n\nexpense_types = response.json()\nprint(f'Available expense types: {len(expense_types)}')\nfor expense_type in expense_types[:5]:  # Show first 5\n    code = expense_type.get('expenseCode')\n    name = expense_type.get('name')\n    print(f\"  {code}: {name}\")\n\n# Extract codes for v3 create expense API\navailable_codes = [et.get('expenseCode') for et in expense_types if et.get('expenseCode')]\nprint(f'\\nCodes for v3 create expense: {list(set(available_codes))}')"
                 },
                 {
                     "step": 3,
                     "title": "Create expense entry",
                     "description": "Add a new expense to the report",
-                    "code": "from datetime import date\n\n# Create expense\nexpense_data = {\n    'ReportID': report_id,\n    'ExpenseTypeCode': 'MEALS',\n    'TransactionAmount': 25.50,\n    'TransactionCurrencyCode': 'USD',\n    'TransactionDate': date.today().strftime('%Y-%m-%d'),\n    'BusinessPurpose': 'Client lunch meeting'\n}\n\nresponse = requests.post(\n    'https://integration.api.concursolutions.com/api/v3.0/expense/entries',\n    headers=headers,\n    json=expense_data\n)\n\nif response.status_code == 200:\n    expense = response.json()\n    print(f'Created expense: {expense[\"ID\"]}')\nelse:\n    print(f'Error: {response.status_code} - {response.text}')"
+                    "code": "from datetime import date\n\n# Create expense with required PaymentTypeID\n# Use INCTS (Daily Allowance/Incidentals) - confirmed working expense type\nexpense_data = {\n    'ReportID': report_id,\n    'ExpenseTypeCode': 'INCTS',  # Confirmed working: Daily Allowance/Incidentals\n    'TransactionAmount': 25.50,\n    'TransactionCurrencyCode': 'USD',\n    'TransactionDate': date.today().strftime('%Y-%m-%d'),\n    'BusinessPurpose': 'Daily allowance for business travel',\n    'PaymentTypeID': 'fr1rdFhUGA6l-5FnPPmuq5_HjOMU='  # Known working Cash PaymentTypeID\n}\n\nresponse = requests.post(\n    'https://integration.api.concursolutions.com/api/v3.0/expense/entries',\n    headers=headers,\n    json=expense_data\n)\n\nif response.status_code == 200:\n    expense = response.json()\n    print(f'Created expense: {expense[\"ID\"]}')\nelse:\n    print(f'Error: {response.status_code} - {response.text}')"
                 }
             ]
         },
@@ -170,27 +170,94 @@ def _generate_expenses_guide() -> Dict[str, Any]:
         ],
         "dependencies": {
             "expense_types": {
-                "description": "Valid expense type codes must be retrieved first",
-                "how_to_get": "GET /api/v3.0/expense/expensetypes",
-                "common_codes": ["MEALS", "LODNG", "AIRFR", "CARRT", "TAXIC", "PARKN", "PHONE"],
-                "example": "Use 'MEALS' for restaurant expenses, 'LODNG' for hotels"
+                "description": "Valid expense type codes must be retrieved from v4 company API",
+                "how_to_get": "GET /expenseconfig/v4/expensetypes",
+                "available_codes": ["COCARMILE", "INCTS", "JPYPTRAN", "LODGING", "MEALS", "MFUEL", "OTHER", "OTHERNP", "PCARMILE"],
+                "example": "Use 'OTHER' for general expenses, 'LODGING' for hotels, 'MEALS' for restaurants",
+                "note": "v3 expense types API returns 403 Forbidden, use v4 company API instead"
             },
             "payment_types": {
-                "description": "Payment type IDs are base64-encoded and user-specific",
-                "how_to_get": "GET /expenseconfig/v4/users/{userId}/paymenttypes",
-                "note": "PaymentTypeID is optional but recommended for accurate expense tracking"
+                "description": "PaymentTypeID is REQUIRED for v3 create expense API",
+                "working_id": "fr1rdFhUGA6l-5FnPPmuq5_HjOMU=",
+                "payment_type": "Cash",
+                "note": "v4 payment types API IDs don't work with v3 create, use the known working Cash ID",
+                "how_to_get_others": "Extract PaymentTypeID from existing expenses via GET /api/v3.0/expense/entries/{expenseId}"
             },
             "report_id": {
-                "description": "Expenses must be added to existing reports",
+                "description": "Expenses must be added to existing draft reports",
                 "how_to_get": "GET /api/v3.0/expense/reports",
-                "example": "Get first report: reports['Items'][0]['ID']"
+                "example": "Get first report: reports['Items'][0]['ID']",
+                "note": "Cannot add expenses to submitted reports"
             }
         },
         "api_endpoints": {
             "expense_entries": "/api/v3.0/expense/entries",
-            "expense_types": "/api/v3.0/expense/expensetypes",
-            "payment_types": "/expenseconfig/v4/users/{userId}/paymenttypes",
+            "expense_types_working": "/expenseconfig/v4/expensetypes",
+            "expense_types_v3_broken": "/api/v3.0/expense/expensetypes",
+            "payment_types_v4": "/expenseconfig/v4/users/{userId}/paymenttypes",
             "reports": "/api/v3.0/expense/reports"
+        }
+    }
+
+
+def _generate_expense_types_guide() -> Dict[str, Any]:
+    """Generate expense types guide with working v4 API approach."""
+    return {
+        "title": "Getting Expense Types - Working Solution",
+        "overview": "Learn how to retrieve expense types using the v4 company API that works with v3 create expense.",
+        "how_to": {
+            "steps": [
+                {
+                    "step": 1,
+                    "title": "Get expense types from v4 company API",
+                    "description": "Use the v4 company endpoint that provides v3-compatible codes",
+                    "code": "# Get expense types from v4 company API\nresponse = requests.get(\n    'https://integration.api.concursolutions.com/expenseconfig/v4/expensetypes',\n    headers=headers\n)\n\nif response.status_code == 200:\n    expense_types = response.json()\n    print(f'Found {len(expense_types)} expense types')\n    \n    # Extract v3-compatible codes\n    available_codes = []\n    for et in expense_types:\n        code = et.get('expenseCode')\n        name = et.get('name')\n        if code:\n            available_codes.append(code)\n            print(f'  {code}: {name}')\n    \n    print(f'\\nAvailable codes for v3 create expense: {sorted(set(available_codes))}')\nelse:\n    print(f'Error: {response.status_code} - {response.text}')"
+                },
+                {
+                    "step": 2,
+                    "title": "Test expense creation with available codes",
+                    "description": "Create expenses using the codes from step 1",
+                    "code": "# Test creating expense with confirmed working codes\nworking_codes = ['INCTS', 'OTHER']  # Confirmed working codes\n\nfor code in working_codes:\n    expense_data = {\n        'ReportID': report_id,  # From reports list\n        'ExpenseTypeCode': code,\n        'TransactionAmount': 25.00,\n        'TransactionCurrencyCode': 'USD',\n        'TransactionDate': '2024-01-15',\n        'BusinessPurpose': f'Business expense - {\"Daily allowance\" if code == \"INCTS\" else \"General travel\"}',\n        'PaymentTypeID': 'fr1rdFhUGA6l-5FnPPmuq5_HjOMU='  # Known working Cash ID\n    }\n    \n    response = requests.post(\n        'https://integration.api.concursolutions.com/api/v3.0/expense/entries',\n        headers=headers,\n        json=expense_data\n    )\n    \n    if response.status_code == 200:\n        expense = response.json()\n        print(f'✅ {code} expense created: {expense[\"ID\"]}')\n    else:\n        print(f'❌ {code} failed: {response.status_code}')\n\n# Recommended: Use INCTS as default\nprint('💡 Recommendation: Use INCTS as default expense type for reliable creation')"
+                }
+            ]
+        },
+        "key_findings": {
+            "working_solution": {
+                "expense_types_api": "/expenseconfig/v4/expensetypes",
+                "create_expense_api": "/api/v3.0/expense/entries",
+                "required_payment_id": "fr1rdFhUGA6l-5FnPPmuq5_HjOMU=",
+                "payment_type": "Cash"
+            },
+            "why_this_works": [
+                "v4 company API provides expense types with v3-compatible 'expenseCode' field",
+                "v3 create expense API requires PaymentTypeID (not optional)",
+                "Known working PaymentTypeID bridges v4 expense types with v3 create expense",
+                "Company-wide expense types include all codes available to users"
+            ],
+            "what_doesnt_work": [
+                "v3 expense types API returns 403 Forbidden",
+                "v4 user policy expense types don't have 'expenseCode' field",
+                "v4 payment types API IDs are incompatible with v3 create expense",
+                "Direct user expense types endpoint returns 500 Server Error"
+            ]
+        },
+        "available_codes": {
+            "description": "Expense type codes available from v4 company API",
+            "working_codes": [
+                {"code": "INCTS", "description": "Daily Allowance (Incidentals)", "status": "✅ WORKING"},
+                {"code": "OTHER", "description": "General Travel Expenses", "status": "✅ WORKING"}
+            ],
+            "non_working_codes": [
+                {"code": "COCARMILE", "description": "Company car mileage", "status": "❌ Not in user's expense group"},
+                {"code": "JPYPTRAN", "description": "Japan transport", "status": "❌ Not in user's expense group"},
+                {"code": "LODGING", "description": "Hotel/accommodation", "status": "❌ Not in user's expense group"},
+                {"code": "MEALS", "description": "Restaurant/meals", "status": "❌ Not in user's expense group"},
+                {"code": "MFUEL", "description": "Motor fuel", "status": "❌ Other error"},
+                {"code": "OTHERNP", "description": "Other non-personal", "status": "❌ Not in user's expense group"},
+                {"code": "PCARMILE", "description": "Personal car mileage", "status": "❌ Not in user's expense group"}
+            ],
+            "recommendation": "Use 'INCTS' as default - it's confirmed working for all users tested",
+            "note": "Non-working codes require Concur administrator to add them to user's expense group"
         }
     }
 
@@ -306,6 +373,7 @@ def create_expense_tools(mcp, concur_sdk: ConcurExpenseSDK):
                 ConcurAPITopic.AUTHENTICATION: _generate_authentication_guide,
                 ConcurAPITopic.SETUP: _generate_authentication_guide,  # Same as auth
                 ConcurAPITopic.EXPENSES: _generate_expenses_guide,
+                ConcurAPITopic.EXPENSE_TYPES: _generate_expense_types_guide,
                 ConcurAPITopic.REPORTS: _generate_reports_guide,
             }
             
@@ -418,7 +486,7 @@ def create_expense_tools(mcp, concur_sdk: ConcurExpenseSDK):
             }
 
     @mcp.tool()
-    def create_concur_expense(report_id: str, expense_type: str, amount: float, 
+    def create_concur_expense(report_id: str, amount: float, expense_type: str = "INCTS", 
                              currency_code: str = "USD", transaction_date: str = None,
                              business_purpose: str = "", vendor_description: str = "",
                              city_name: str = "", country_code: str = "US",
@@ -428,15 +496,15 @@ def create_expense_tools(mcp, concur_sdk: ConcurExpenseSDK):
         
         Args:
             report_id: The ID of the report to add the expense to
-            expense_type: Type of expense (e.g., AIRFR, LODNG, MEALS, CARRT, TAXIC, PARKN, PHONE, INTRN, OTHER)
             amount: Transaction amount
+            expense_type: Type of expense (default: 'INCTS' - Daily Allowance/Incidentals). Confirmed working types: 'INCTS', 'OTHER'
             currency_code: Currency code (default: USD)
             transaction_date: Date of transaction in YYYY-MM-DD format (default: today)
             business_purpose: Business purpose of the expense
             vendor_description: Vendor/merchant description
             city_name: City where expense occurred
             country_code: Country code (default: US)
-            payment_type: Payment method (default: CASH)
+            payment_type: Payment method (default: CASH) - automatically uses known working PaymentTypeID
         
         Returns:
             Dictionary containing created expense details
@@ -587,10 +655,15 @@ def create_expense_tools(mcp, concur_sdk: ConcurExpenseSDK):
     @mcp.tool()
     def get_concur_expense_types() -> Dict[str, Any]:
         """
-        Get available expense types from Concur.
+        Get available expense types from Concur using the working v4 company API.
+        
+        This function retrieves expense types with v3-compatible codes that can be used
+        with the create_concur_expense function. Uses /expenseconfig/v4/expensetypes
+        endpoint which provides the 'expenseCode' field needed for v3 expense creation.
         
         Returns:
-            Dictionary containing expense types
+            Dictionary containing expense types with codes like: OTHER, LODGING, MEALS, 
+            COCARMILE, INCTS, JPYPTRAN, MFUEL, OTHERNP, PCARMILE
         """
         try:
             result = concur_sdk.get_expense_types()
