@@ -160,7 +160,12 @@ def _generate_v4_expenses_guide() -> Dict[str, Any]:
             "exchange_rate": "Always use {'value': 1, 'operation': 'MULTIPLY'} for base currency",
             "expense_type": "Must include id, name, isDeleted: false, listItemId: null",
             "transaction_amount": "Use 'value' and 'currencyCode' (lowercase)",
-            "optional_fields": ["vendor", "businessPurpose", "transactionDate"]
+            "optional_fields": ["vendor", "businessPurpose", "transactionDate"],
+            "field_formats": {
+                "vendor": "Object with 'description' field: {'description': 'vendor name'}",
+                "businessPurpose": "Simple string value, NOT an object",
+                "transactionDate": "String in YYYY-MM-DD format"
+            }
         },
         "examples": [
             {

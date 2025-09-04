@@ -464,7 +464,7 @@ class ConcurExpenseSDK:
         except:
             pass  # Use ID as name if lookup fails
         
-        # Build v4 payload exactly like the notebook
+        # Build v4 payload - try simpler structure based on error analysis
         payload = {
             "expenseSource": "EA",
             "exchangeRate": {
@@ -481,17 +481,18 @@ class ConcurExpenseSDK:
                 "value": amount,
                 "currencyCode": currency_code.lower()
             },
-            "vendor": {
-                "description": vendor_description
-            },
             "transactionDate": transaction_date
         }
         
-        # Only add business purpose if provided and not empty
-        if business_purpose and business_purpose.strip():
-            payload["businessPurpose"] = {
-                "value": business_purpose
+        # Add vendor as object with description field
+        if vendor_description and vendor_description.strip():
+            payload["vendor"] = {
+                "description": vendor_description
             }
+        
+        # Add business purpose - try as simple string first
+        if business_purpose and business_purpose.strip():
+            payload["businessPurpose"] = business_purpose
         
         try:
             # Use v4 endpoint like the notebook
