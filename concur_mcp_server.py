@@ -8,13 +8,17 @@ Uses the ConcurExpenseSDK for all API interactions.
 import os
 import sys
 from typing import List, Dict, Any
-from dotenv import load_dotenv
 from fastmcp import FastMCP
 from concur_expense_sdk import ConcurExpenseSDK, AuthenticationError, NotFoundError, ValidationError, ConcurAPIError
 from concur_expense_tools import create_expense_tools
 
-# Load environment variables from .env if present
-load_dotenv()
+# Load environment variables from .env if present (optional)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available, use system environment variables only
+    pass
 
 # Initialize the MCP server
 mcp = FastMCP(name="ConcurReportServer")

@@ -8,11 +8,15 @@ import os
 import sys
 import requests
 from typing import List, Dict, Any
-from dotenv import load_dotenv
 from fastmcp import FastMCP
 
-# Load environment variables from .env if present
-load_dotenv()
+# Load environment variables from .env if present (optional)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not available, use system environment variables only
+    pass
 
 # Initialize the MCP server
 mcp = FastMCP(name="ConcurReportServerOAuth")
