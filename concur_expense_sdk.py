@@ -70,7 +70,7 @@ class ConcurConfig:
     password: str
     base_url: str = "https://integration.api.concursolutions.com"
     token_url: str = "https://integration.api.concursolutions.com/oauth2/v0/token"
-    api_version: str = "v3.0"
+    api_version: str = "v4"  # Updated to use v4 endpoints
 
 
 @dataclass
@@ -202,7 +202,8 @@ class ConcurExpenseSDK:
             "Content-Type": "application/json"
         })
         
-        url = f"{self.config.base_url}/api/{self.config.api_version}/{endpoint}"
+        # Use direct v4 endpoints like the notebook
+        url = f"{self.config.base_url}/{endpoint}"
         
         try:
             response = self.session.request(method, url, headers=headers, **kwargs)
@@ -240,34 +241,35 @@ class ConcurExpenseSDK:
         Returns:
             Dictionary containing reports and metadata
         """
-        params = {
-            "limit": min(max(1, limit), 100)
-        }
+        # Get user ID if not provided
+        if not user:
+            user = self.get_user_id()
+            if not user:
+                raise AuthenticationError("Could not determine user ID")
         
-        if user:
-            params["user"] = user
-        
-        response = self._make_request("GET", "expense/reports", params=params)
+        # Use v4 endpoint like the notebook
+        endpoint = f"expensereports/v4/users/{user}/context/TRAVELER/reports"
+        response = self._make_request("GET", endpoint)
         data = response.json()
         
         reports = []
-        for item in data.get('Items', []):
+        for item in data.get('content', []):
             report = ExpenseReport(
-                id=item.get('ID'),
-                name=item.get('Name'),
-                purpose=item.get('Purpose'),
-                business_purpose=item.get('BusinessPurpose'),
-                total=item.get('Total'),
-                currency_code=item.get('CurrencyCode'),
-                submission_date=item.get('SubmitDate'),
-                approval_status=item.get('ApprovalStatusName'),
-                workflow_step=item.get('WorkflowStepName'),
-                owner_name=item.get('OwnerName'),
-                created_date=item.get('CreateDate'),
-                last_modified_date=item.get('LastModifiedDate'),
-                country=item.get('Country'),
-                policy_id=item.get('PolicyID'),
-                report_version=item.get('ReportVersion')
+                id=item.get('reportId'),
+                name=item.get('name'),
+                purpose=item.get('purpose'),
+                business_purpose=item.get('businessPurpose'),
+                total=item.get('approvedAmount', {}).get('value') if item.get('approvedAmount') else None,
+                currency_code=item.get('approvedAmount', {}).get('currencyCode') if item.get('approvedAmount') else None,
+                submission_date=item.get('reportDate'),
+                approval_status=item.get('approvalStatus'),
+                workflow_step=item.get('workflowStep'),
+                owner_name=item.get('ownerName'),
+                created_date=item.get('creationDate'),
+                last_modified_date=item.get('lastModifiedDate'),
+                country=item.get('country'),
+                policy_id=item.get('policyId'),
+                report_version=item.get('reportVersion')
             )
             reports.append(asdict(report))
         
@@ -275,45 +277,11 @@ class ConcurExpenseSDK:
             'success': True,
             'reports': reports,
             'count': len(reports),
-            'total_available': data.get('TotalCount', len(reports)),
-            'limit': limit
+            'content': data.get('content', []),  # Keep original v4 format too
+            'totalElements': data.get('totalElements'),
+            'totalPages': data.get('totalPages')
         }
 
-    def get_report(self, report_id: str) -> Dict[str, Any]:
-        """
-        Get a specific expense report by ID.
-        
-        Args:
-            report_id: The ID of the report to retrieve
-            
-        Returns:
-            Dictionary containing report details
-        """
-        response = self._make_request("GET", f"expense/reports/{report_id}")
-        data = response.json()
-        
-        report = ExpenseReport(
-            id=data.get('ID'),
-            name=data.get('Name'),
-            purpose=data.get('Purpose'),
-            business_purpose=data.get('BusinessPurpose'),
-            total=data.get('Total'),
-            currency_code=data.get('CurrencyCode'),
-            submission_date=data.get('SubmitDate'),
-            approval_status=data.get('ApprovalStatusName'),
-            workflow_step=data.get('WorkflowStepName'),
-            owner_name=data.get('OwnerName'),
-            created_date=data.get('CreateDate'),
-            last_modified_date=data.get('LastModifiedDate'),
-            country=data.get('Country'),
-            policy_id=data.get('PolicyID'),
-            report_version=data.get('ReportVersion')
-        )
-        
-        return {
-            'success': True,
-            'report': asdict(report)
-        }
 
     def create_report(self, name: str, purpose: str = "", business_purpose: str = "", 
                      currency_code: str = "USD", country: str = "US") -> Dict[str, Any]:
@@ -330,59 +298,40 @@ class ConcurExpenseSDK:
         Returns:
             Dictionary containing created report details
         """
-        payload = {
-            "Name": name,
-            "Purpose": purpose,
-            "BusinessPurpose": business_purpose,
-            "CurrencyCode": currency_code,
-            "Country": country
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
+        
+        # Use v4 payload format like the notebook
+        v4_payload = {
+            "name": name,
+            "reportDate": datetime.now().strftime('%Y-%m-%d'),
+            "businessPurpose": business_purpose or purpose,
         }
         
-        response = self._make_request("POST", "expense/reports", json=payload)
+        # Use v4 endpoint like the notebook
+        endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports"
+        response = self._make_request("POST", endpoint, json=v4_payload)
         data = response.json()
+        
+        # Extract report ID from URI like the notebook
+        report_id = None
+        if 'uri' in data:
+            report_id = data['uri'].split('/')[-1]
         
         return {
             'success': True,
-            'report_id': data.get('ID'),
-            'uri': data.get('URI'),
+            'report_id': report_id,
+            'uri': data.get('uri'),
+            'ID': report_id,  # For compatibility
             'message': f"Successfully created report: {name}"
         }
 
-    def update_report(self, report_id: str, **kwargs) -> Dict[str, Any]:
-        """
-        Update an existing expense report.
-        
-        Args:
-            report_id: The ID of the report to update
-            **kwargs: Fields to update (name, purpose, business_purpose, etc.)
-            
-        Returns:
-            Dictionary indicating success/failure
-        """
-        # Map common field names to API field names
-        field_mapping = {
-            'name': 'Name',
-            'purpose': 'Purpose',
-            'business_purpose': 'BusinessPurpose',
-            'currency_code': 'CurrencyCode',
-            'country': 'Country'
-        }
-        
-        payload = {}
-        for key, value in kwargs.items():
-            api_key = field_mapping.get(key, key)
-            payload[api_key] = value
-        
-        response = self._make_request("PUT", f"expense/reports/{report_id}", json=payload)
-        
-        return {
-            'success': True,
-            'message': f"Successfully updated report {report_id}"
-        }
 
     def delete_report(self, report_id: str) -> Dict[str, Any]:
         """
-        Delete an expense report.
+        Delete an expense report using v4 endpoint (like notebook).
         
         Args:
             report_id: The ID of the report to delete
@@ -390,18 +339,26 @@ class ConcurExpenseSDK:
         Returns:
             Dictionary indicating success/failure
         """
-        self._make_request("DELETE", f"expense/reports/{report_id}")
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
+        
+        # Use v4 endpoint like the notebook
+        endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports/{report_id}"
+        response = self._make_request("DELETE", endpoint)
         
         return {
             'success': True,
-            'message': f"Successfully deleted report {report_id}"
+            'message': f"Successfully deleted report {report_id}",
+            'api_version': 'v4'
         }
 
     # EXPENSE ENTRY METHODS
     
     def list_expenses(self, report_id: str, limit: int = 25, offset: int = 0) -> Dict[str, Any]:
         """
-        List expense entries for a specific report.
+        List expense entries for a specific report using v4 endpoint.
         
         Args:
             report_id: The ID of the report
@@ -411,34 +368,44 @@ class ConcurExpenseSDK:
         Returns:
             Dictionary containing expenses and metadata
         """
-        params = {
-            "limit": min(max(1, limit), 100),
-            "reportID": report_id
-        }
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
         
-        # Only add offset if it's greater than 0 (Concur API doesn't like offset=0)
-        if offset > 0:
-            params["offset"] = offset
-        
-        response = self._make_request("GET", "expense/entries", params=params)
+        # Use v4 endpoint like the notebook
+        endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports/{report_id}/expenses"
+        response = self._make_request("GET", endpoint)
         data = response.json()
         
         expenses = []
-        for item in data.get('Items', []):
+        # Handle both v4 (array) and legacy formats
+        items = data if isinstance(data, list) else data.get('Items', [])
+        
+        for item in items:
+            # Try v4 format first, fall back to v3 format
             expense = ExpenseEntry(
-                id=item.get('ID'),
-                report_id=item.get('ReportID'),
-                expense_type=item.get('ExpenseTypeName'),
-                transaction_amount=item.get('TransactionAmount'),
-                transaction_currency_code=item.get('TransactionCurrencyCode'),
-                transaction_date=item.get('TransactionDate'),
-                business_purpose=item.get('BusinessPurpose'),
-                vendor_description=item.get('VendorDescription'),
-                city_name=item.get('LocationName'),
-                country_code=item.get('CountryCode'),
-                payment_type=item.get('PaymentTypeName'),
-                receipt_required=item.get('ReceiptRequired'),
-                has_receipt=item.get('HasReceipt')
+                id=item.get('expenseId') or item.get('ID'),
+                report_id=report_id,
+                expense_type=(item.get('expenseType', {}).get('name') if item.get('expenseType') 
+                             else item.get('ExpenseTypeName')),
+                transaction_amount=(item.get('transactionAmount', {}).get('value') if item.get('transactionAmount') 
+                                  else item.get('TransactionAmount')),
+                transaction_currency_code=(item.get('transactionAmount', {}).get('currencyCode') if item.get('transactionAmount') 
+                                         else item.get('TransactionCurrencyCode')),
+                transaction_date=item.get('transactionDate') or item.get('TransactionDate'),
+                business_purpose=(item.get('businessPurpose', {}).get('value') if item.get('businessPurpose') 
+                                else item.get('BusinessPurpose')),
+                vendor_description=(item.get('vendor', {}).get('description') if item.get('vendor') 
+                                  else item.get('VendorDescription')),
+                city_name=(item.get('location', {}).get('city') if item.get('location') 
+                          else item.get('LocationName')),
+                country_code=(item.get('location', {}).get('countryCode') if item.get('location') 
+                            else item.get('CountryCode')),
+                payment_type=(item.get('paymentType', {}).get('name') if item.get('paymentType') 
+                            else item.get('PaymentTypeName')),
+                receipt_required=item.get('receiptRequired') or item.get('ReceiptRequired'),
+                has_receipt=item.get('hasReceipt') or item.get('HasReceipt')
             )
             expenses.append(asdict(expense))
         
@@ -446,45 +413,11 @@ class ConcurExpenseSDK:
             'success': True,
             'expenses': expenses,
             'count': len(expenses),
-            'total_available': data.get('TotalCount', len(expenses)),
-            'offset': offset,
-            'limit': limit,
-            'report_id': report_id
+            'api_version': 'v4',
+            'report_id': report_id,
+            'message': f'Retrieved {len(expenses)} expenses from report {report_id}'
         }
 
-    def get_expense(self, expense_id: str) -> Dict[str, Any]:
-        """
-        Get a specific expense entry by ID.
-        
-        Args:
-            expense_id: The ID of the expense entry to retrieve
-            
-        Returns:
-            Dictionary containing expense details
-        """
-        response = self._make_request("GET", f"expense/entries/{expense_id}")
-        data = response.json()
-        
-        expense = ExpenseEntry(
-            id=data.get('ID'),
-            report_id=data.get('ReportID'),
-            expense_type=data.get('ExpenseTypeName'),
-            transaction_amount=data.get('TransactionAmount'),
-            transaction_currency_code=data.get('TransactionCurrencyCode'),
-            transaction_date=data.get('TransactionDate'),
-            business_purpose=data.get('BusinessPurpose'),
-            vendor_description=data.get('VendorDescription'),
-            city_name=data.get('LocationName'),
-            country_code=data.get('CountryCode'),
-            payment_type=data.get('PaymentTypeName'),
-            receipt_required=data.get('ReceiptRequired'),
-            has_receipt=data.get('HasReceipt')
-        )
-        
-        return {
-            'success': True,
-            'expense': asdict(expense)
-        }
 
     def create_expense(self, report_id: str, expense_type: str, amount: float, 
                       currency_code: str = "USD", transaction_date: Optional[str] = None,
@@ -492,11 +425,11 @@ class ConcurExpenseSDK:
                       city_name: str = "", country_code: str = "US",
                       payment_type: Optional[str] = None) -> Dict[str, Any]:
         """
-        Create a new expense entry in a report using v3 expense entries API.
+        Create a new expense entry in a report using v4 endpoint.
         
         Args:
             report_id: The ID of the report to add the expense to
-            expense_type: Type of expense (e.g., AIRFR, LODNG, MEALS, CARRT, TAXIC, PARKN, PHONE, INTRN, OTHER)
+            expense_type: Type of expense (expense type ID from get_expense_types)
             amount: Transaction amount
             currency_code: Currency code (default: USD)
             transaction_date: Date of transaction in YYYY-MM-DD format (default: today)
@@ -504,7 +437,7 @@ class ConcurExpenseSDK:
             vendor_description: Vendor/merchant description
             city_name: City where expense occurred
             country_code: Country code (default: US)
-            payment_type: Payment method name (optional, e.g., "Cash", "Company Paid")
+            payment_type: Payment method name (optional)
             
         Returns:
             Dictionary containing created expense details
@@ -512,36 +445,73 @@ class ConcurExpenseSDK:
         if transaction_date is None:
             transaction_date = date.today().strftime("%Y-%m-%d")
         
-        # Build v3 expense entries payload
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
+        
+        # Get the expense type name for the payload
+        expense_type_name = expense_type  # Default to ID
+        
+        # Try to get the actual name from get_expense_types if possible
+        try:
+            expense_types_result = self.get_expense_types()
+            if expense_types_result['success']:
+                for et in expense_types_result['expense_types']:
+                    if et['id'] == expense_type:
+                        expense_type_name = et['name']
+                        break
+        except:
+            pass  # Use ID as name if lookup fails
+        
+        # Build v4 payload exactly like the notebook
         payload = {
-            "ReportID": report_id,
-            "ExpenseTypeCode": expense_type,
-            "TransactionAmount": amount,
-            "TransactionCurrencyCode": currency_code,
-            "TransactionDate": transaction_date,
-            "BusinessPurpose": business_purpose,
-            "VendorDescription": vendor_description,
-            "LocationName": city_name,
-            "CountryCode": country_code
+            "expenseSource": "EA",
+            "exchangeRate": {
+                "value": 1,
+                "operation": "MULTIPLY"
+            },
+            "expenseType": {
+                "id": expense_type,
+                "name": expense_type_name,
+                "isDeleted": False,
+                "listItemId": None
+            },
+            "transactionAmount": {
+                "value": amount,
+                "currencyCode": currency_code.lower()
+            },
+            "vendor": {
+                "description": vendor_description
+            },
+            "transactionDate": transaction_date
         }
         
-        # Handle payment type - PaymentTypeID is required for v3 API
-        # Use known working PaymentTypeID (Cash payment type discovered from existing expenses)
-        default_payment_type_id = "fr1rdFhUGA6l-5FnPPmuq5_HjOMU="
-        payload["PaymentTypeID"] = default_payment_type_id
-        logger.info(f"Using known working Cash PaymentTypeID for v3 API compatibility")
+        # Only add business purpose if provided and not empty
+        if business_purpose and business_purpose.strip():
+            payload["businessPurpose"] = {
+                "value": business_purpose
+            }
         
         try:
-            response = self._make_request("POST", "expense/entries", json=payload)
-            data = response.json()
+            # Use v4 endpoint like the notebook
+            endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports/{report_id}/expenses"
+            response = self._make_request("POST", endpoint, json=payload)
             
-            return {
-                'success': True,
-                'expense_id': data.get('ID'),
-                'uri': data.get('URI'),
-                'message': f"Successfully created expense entry for {amount} {currency_code}",
-                'api_version': 'v3'
-            }
+            if response.status_code in [200, 201]:
+                return {
+                    'success': True,
+                    'expense_id': None,  # v4 doesn't return ID in response
+                    'message': f"Successfully created expense entry for {amount} {currency_code}",
+                    'api_version': 'v4',
+                    'status_code': response.status_code
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"HTTP {response.status_code}",
+                    'message': f"Failed to create expense entry: HTTP {response.status_code}"
+                }
         except Exception as e:
             return {
                 'success': False,
@@ -549,93 +519,114 @@ class ConcurExpenseSDK:
                 'message': f"Failed to create expense entry: {str(e)}"
             }
 
-    def update_expense(self, expense_id: str, **kwargs) -> Dict[str, Any]:
+    def update_expense(self, expense_id: str, report_id: str, amount: Optional[float] = None, 
+                      expense_type_id: Optional[str] = None, expense_type_name: Optional[str] = None,
+                      date: Optional[str] = None, vendor: Optional[str] = None) -> Dict[str, Any]:
         """
-        Update an existing expense entry.
+        Update an existing expense entry using v4 endpoint (like notebook).
         
         Args:
-            expense_id: The ID of the expense entry to update
-            **kwargs: Fields to update
+            expense_id: The ID of the expense to update
+            report_id: The ID of the report containing the expense
+            amount: Updated transaction amount
+            expense_type_id: Updated expense type ID
+            expense_type_name: Updated expense type name
+            date: Updated transaction date
+            vendor: Updated vendor description
             
         Returns:
             Dictionary indicating success/failure
         """
-        # Map common field names to API field names
-        field_mapping = {
-            'amount': 'TransactionAmount',
-            'currency_code': 'TransactionCurrencyCode',
-            'transaction_date': 'TransactionDate',
-            'business_purpose': 'BusinessPurpose',
-            'vendor_description': 'VendorDescription',
-            'city_name': 'LocationName',
-            'country_code': 'CountryCode',
-            'payment_type': 'PaymentTypeName',  # v3 API expects PaymentTypeName
-            'expense_type': 'ExpenseTypeCode'
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
+        
+        # Build v4 payload like the notebook
+        payload = {
+            "expenseSource": "EA",
+            "exchangeRate": {
+                "value": 1,
+                "operation": "MULTIPLY"
+            }
         }
         
-        payload = {}
-        for key, value in kwargs.items():
-            api_key = field_mapping.get(key, key)
-            payload[api_key] = value
+        # Only add fields that are provided (like the notebook)
+        if expense_type_id and expense_type_name:
+            payload["expenseType"] = {
+                "id": expense_type_id,
+                "name": expense_type_name,
+                "isDeleted": False,
+                "listItemId": None
+            }
         
-        response = self._make_request("PUT", f"expense/entries/{expense_id}", json=payload)
+        if amount:
+            payload["transactionAmount"] = {
+                "value": amount,
+                "currencyCode": "usd"
+            }
+        
+        if vendor:
+            payload["vendor"] = {
+                "description": vendor
+            }
+            
+        if date:
+            payload["transactionDate"] = date
+        
+        try:
+            # Use v4 endpoint with PATCH like the notebook
+            endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports/{report_id}/expenses/{expense_id}"
+            response = self._make_request("PATCH", endpoint, json=payload)
+            
+            if response.status_code in [200, 201, 204]:  # 204 No Content is success for PATCH
+                return {
+                    'success': True,
+                    'message': f"Successfully updated expense {expense_id}",
+                    'api_version': 'v4',
+                    'status_code': response.status_code
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"HTTP {response.status_code}",
+                    'message': f"Failed to update expense: HTTP {response.status_code}"
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f"Failed to update expense: {str(e)}"
+            }
+
+    def delete_expense(self, expense_id: str, report_id: str) -> Dict[str, Any]:
+        """
+        Delete an expense entry using v4 endpoint (like notebook).
+        
+        Args:
+            expense_id: The ID of the expense to delete
+            report_id: The ID of the report containing the expense
+            
+        Returns:
+            Dictionary indicating success/failure
+        """
+        # Get user ID for v4 endpoint
+        user_id = self.get_user_id()
+        if not user_id:
+            raise AuthenticationError("Could not determine user ID")
+        
+        # Use v4 endpoint like the notebook
+        endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports/{report_id}/expenses/{expense_id}"
+        response = self._make_request("DELETE", endpoint)
         
         return {
             'success': True,
-            'message': f"Successfully updated expense entry {expense_id}"
+            'message': f"Successfully deleted expense {expense_id} from report {report_id}",
+            'api_version': 'v4'
         }
 
-    def delete_expense(self, expense_id: str) -> Dict[str, Any]:
-        """
-        Delete an expense entry.
-        
-        Args:
-            expense_id: The ID of the expense entry to delete
-            
-        Returns:
-            Dictionary indicating success/failure
-        """
-        self._make_request("DELETE", f"expense/entries/{expense_id}")
-        
-        return {
-            'success': True,
-            'message': f"Successfully deleted expense entry {expense_id}"
-        }
 
     # UTILITY METHODS
-    
-    def _get_payment_type_id(self, payment_type_name: str) -> Optional[str]:
-        """
-        Get the actual PaymentTypeID for a given payment type name by examining existing expenses.
-        This is needed because Concur uses base64-encoded IDs internally.
-        """
-        try:
-            # Get a few existing expenses to find payment type IDs
-            reports_result = self.list_reports(limit=5)
-            if not reports_result['success']:
-                return None
-            
-            for report in reports_result['reports']:
-                expenses_result = self.list_expenses(report['id'], limit=5)
-                if expenses_result['success'] and expenses_result['expenses']:
-                    for expense in expenses_result['expenses']:
-                        # Get the full expense details to see the PaymentTypeID
-                        try:
-                            response = self._make_request("GET", f"expense/entries/{expense['id']}")
-                            data = response.json()
-                            
-                            expense_payment_name = data.get('PaymentTypeName', '').lower()
-                            target_payment_name = payment_type_name.lower()
-                            
-                            if expense_payment_name == target_payment_name:
-                                return data.get('PaymentTypeID')
-                        except:
-                            continue
-            
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get payment type ID: {e}")
-            return None
     
     def test_connection(self) -> Dict[str, Any]:
         """
@@ -687,43 +678,42 @@ class ConcurExpenseSDK:
 
     def get_expense_types(self) -> Dict[str, Any]:
         """
-        Get available expense types using user's policies (compatible with v3 create expense).
+        Get available expense types using user-specific v4 endpoint (like notebook).
         
         Returns:
-            Dictionary containing expense types with v3-compatible codes for the specific user
+            Dictionary containing expense types for the specific user
         """
         try:
-            # Use company-wide expense types (these have the v3-compatible codes we need)
-            url = f"{self.config.base_url}/expenseconfig/v4/expensetypes"
-            headers = {
-                "Authorization": f"Bearer {self._get_access_token()}",
-                "Accept": "application/json"
-            }
+            # Get user ID for user-specific endpoint
+            user_id = self.get_user_id()
+            if not user_id:
+                raise AuthenticationError("Could not determine user ID")
             
-            response = self.session.get(url, headers=headers)
-            response.raise_for_status()
+            # Use user-specific expense types endpoint like the notebook
+            endpoint = f"expenseconfig/v4/users/{user_id}/context/TRAVELER/expensetypes"
+            response = self._make_request("GET", endpoint)
             data = response.json()
             
             expense_types = []
             for item in data:
-                # Extract v3-compatible information
-                expense_types.append({
-                    'code': item.get('expenseCode'),  # This is the v3-compatible code
-                    'name': item.get('name'),
-                    'category': item.get('expenseCategoryCode'),
-                    'spend_category': item.get('spendCategoryCode'),
-                    'expense_type_id': item.get('expenseTypeId'),  # v4 ID
-                    'description': item.get('description'),
-                    'is_deleted': item.get('isDeleted', False),
-                    'show_on_mobile': item.get('showOnMobile', True)
-                })
+                # Filter out items that start with '0' like the notebook
+                if not item.get('expenseTypeId', '').startswith('0'):
+                    expense_types.append({
+                        'name': item.get('name'),
+                        'id': item.get('expenseTypeId'),
+                        'code': item.get('expenseCategoryCode'),
+                        'expense_type_id': item.get('expenseTypeId'),  # For compatibility
+                        'description': item.get('description'),
+                        'is_deleted': item.get('isDeleted', False)
+                    })
             
             return {
                 'success': True,
                 'expense_types': expense_types,
+                'Items': expense_types,  # For compatibility with old format
                 'count': len(expense_types),
-                'api_version': 'v4_company',
-                'message': f'Retrieved {len(expense_types)} expense types from company configuration'
+                'api_version': 'v4_user_specific',
+                'message': f'Retrieved {len(expense_types)} expense types from user-specific configuration'
             }
                 
         except Exception as e:
