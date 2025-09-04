@@ -303,19 +303,38 @@ class ConcurExpenseSDK:
         if not user_id:
             raise AuthenticationError("Could not determine user ID")
         
-        # Use v4 payload format like the notebook
+        # Get user's default policy (required for v4 API)
+        policies_endpoint = f"expenseconfig/v4/users/{user_id}/context/TRAVELER/policies"
+        policies_response = self._make_request("GET", policies_endpoint)
+        policies = policies_response.json()
+        
+        default_policy_id = None
+        for policy in policies:
+            if policy.get('isDefault', False):
+                default_policy_id = policy.get('policyId') or policy.get('id')
+                break
+        
+        if not default_policy_id and policies:
+            # Use first available policy if no default found
+            default_policy_id = policies[0].get('policyId') or policies[0].get('id')
+        
+        if not default_policy_id:
+            raise ValidationError("No expense policies found for user")
+        
+        # Use v4 payload format with required policyId
         v4_payload = {
             "name": name,
             "reportDate": datetime.now().strftime('%Y-%m-%d'),
             "businessPurpose": business_purpose or purpose,
+            "policyId": default_policy_id
         }
         
-        # Use v4 endpoint like the notebook
+        # Use v4 endpoint
         endpoint = f"expensereports/v4/users/{user_id}/context/TRAVELER/reports"
         response = self._make_request("POST", endpoint, json=v4_payload)
         data = response.json()
         
-        # Extract report ID from URI like the notebook
+        # Extract report ID from URI
         report_id = None
         if 'uri' in data:
             report_id = data['uri'].split('/')[-1]
@@ -325,7 +344,8 @@ class ConcurExpenseSDK:
             'report_id': report_id,
             'uri': data.get('uri'),
             'ID': report_id,  # For compatibility
-            'message': f"Successfully created report: {name}"
+            'message': f"Successfully created report: {name}",
+            'policy_id': default_policy_id
         }
 
 
